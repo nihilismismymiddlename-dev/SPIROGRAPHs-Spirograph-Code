@@ -6,74 +6,175 @@
         <title>Spirograph</title>
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" href="">
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
         <script type="text/javascript" src="gif.js"></script>
         <script type="text/javascript" src="gif.worker.js"></script>
 
-
+        <style>
+            body { font-family: sans-serif; margin: 16px; }
+            .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+            #panel { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 12px; align-items: center; max-width: 360px; }
+            #panel h2 { grid-column: 1 / -1; margin: 8px 0 4px; font-size: 1em; }
+            #panel label { white-space: nowrap; }
+            #panel input[type="range"] { width: 140px; }
+            #panel .val { font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; color: #555; }
+            #panel input[type="color"] { width: 48px; height: 28px; padding: 0; border: 1px solid #ccc; }
+            #colorList { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+            .actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+            button { padding: 8px 14px; cursor: pointer; }
+            canvas { border: 1px solid #ddd; }
+            #panel input:disabled { opacity: 0.35; }
+            #exportInfo { color: #666; font-size: 0.85em; margin-top: 4px; }
+        </style>
     </head>
     <body>
-        <canvas id="spiro" height="500" width="500"></canvas>
-        <br>
-        <button id="downloadZip" disabled>Generate GIF</button>
-        <br>
+        <div class="layout">
+            <div>
+                <canvas id="spiro" height="500" width="500"></canvas>
+            </div>
+
+            <div id="panel">
+                <h2>Canvas</h2>
+                <label for="size">Size (px)</label>
+                <input type="range" id="size" min="200" max="900" step="10" value="500">
+                <span class="val" id="size_v"></span>
+
+                <label for="bg">Background</label>
+                <input type="color" id="bg" value="#000000">
+                <span class="val"><input type="checkbox" id="bgTransparent" checked> transparent</span>
+
+                <h2>Shape</h2>
+                <label for="scale">Scale</label>
+                <input type="range" id="scale" min="10" max="160" step="1" value="60">
+                <span class="val" id="scale_v"></span>
+
+                <label for="thickness">Thickness</label>
+                <input type="range" id="thickness" min="0.5" max="12" step="0.5" value="2">
+                <span class="val" id="thickness_v"></span>
+
+                <h2>Animation</h2>
+                <label for="duration">Duration (s)</label>
+                <input type="range" id="duration" min="1" max="30" step="1" value="12">
+                <span class="val" id="duration_v"></span>
+
+                <label for="fps">FPS</label>
+                <input type="range" id="fps" min="5" max="60" step="1" value="24">
+                <span class="val" id="fps_v"></span>
+
+                <label for="speed">Speed</label>
+                <input type="range" id="speed" min="0.1" max="5" step="0.1" value="1">
+                <span class="val" id="speed_v"></span>
+
+                <label for="rotSpeed">Rotation</label>
+                <input type="range" id="rotSpeed" min="-5" max="5" step="0.1" value="0">
+                <span class="val" id="rotSpeed_v"></span>
+
+                <h2>Color</h2>
+                <label for="colorCount">Colors</label>
+                <input type="range" id="colorCount" min="1" max="6" step="1" value="6">
+                <span class="val" id="colorCount_v"></span>
+
+                <label for="cycles">Cycles</label>
+                <input type="range" id="cycles" min="1" max="5" step="1" value="1">
+                <span class="val" id="cycles_v"></span>
+
+                <div id="colorList"></div>
+
+                <div class="actions">
+                    <button id="preview">Preview</button>
+                    <button id="saveSettings">Save</button>
+                    <button id="loadSettings">Load</button>
+                    <input type="file" id="loadFile" accept="application/json" hidden>
+                </div>
+
+                <div class="actions">
+                    <button id="generate">Generate GIF</button>
+                    <button id="exportSeq">Export PNG Sequence</button>
+                    <button id="exportSheet">Export Spritesheet</button>
+                </div>
+
+                <div id="exportInfo" class="actions"></div>
+            </div>
+        </div>
+
 <script>
 const STEPS = 2000
-const SCALE = 60
 
-const SpiroCanvas = document.getElementById("spiro")
+const el = (id) => document.getElementById(id)
+
+const RAINBOW = ["#ff0000", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#ff00ff"]
+
+function buildColorPickers() {
+    const count = +el("colorCount").value
+    const list = el("colorList")
+    while (list.children.length > count) list.removeChild(list.lastChild)
+    while (list.children.length < count) {
+        const i = list.children.length
+        const inp = document.createElement("input")
+        inp.type = "color"
+        inp.value = RAINBOW[i % RAINBOW.length]
+        list.appendChild(inp)
+    }
+}
+
+function readSettings() {
+    const hexes = [...el("colorList").children].map((inp) => inp.value)
+    return {
+        size:        +el("size").value,
+        bg:          el("bg").value,
+        transparent: el("bgTransparent").checked,
+        scale:       +el("scale").value,
+        thickness:   +el("thickness").value,
+        duration:    +el("duration").value,
+        fps:         +el("fps").value,
+        speed:       +el("speed").value,
+        rotSpeed:    +el("rotSpeed").value,
+        colorHexes:  hexes,
+        colors:      hexes.map(hexToHsv),
+        cycles:      +el("cycles").value,
+    }
+}
+
+const sliderLabels = {
+    size: "size_v", scale: "scale_v", thickness: "thickness_v",
+    duration: "duration_v", fps: "fps_v", speed: "speed_v", rotSpeed: "rotSpeed_v",
+    colorCount: "colorCount_v", cycles: "cycles_v",
+}
+function refreshLabels() {
+    for (const [input, label] of Object.entries(sliderLabels)) {
+        el(label).textContent = el(input).value
+    }
+}
+Object.keys(sliderLabels).forEach((id) =>
+    el(id).addEventListener("input", refreshLabels))
+el("colorCount").addEventListener("input", buildColorPickers)
+refreshLabels()
+buildColorPickers()
+
+const SpiroCanvas = el("spiro")
 const ctx = SpiroCanvas.getContext("2d")
 
-const width = SpiroCanvas.width
-const height = SpiroCanvas.height
-const center = {
-    x: width / 2,
-    y: height / 2
+function applyCanvasSize(size) {
+    SpiroCanvas.width = size
+    SpiroCanvas.height = size
 }
 
-let lastTime = 0
-function step(time) {
-    let dt = (time - lastTime) / 1000
-    lastTime = time
-    draw(dt)
-    requestAnimationFrame(step)
+function center() {
+    return { x: SpiroCanvas.width / 2, y: SpiroCanvas.height / 2 }
 }
 
-let c = 0
 let a = 0
 let a_dir = 1
+let spinnies = 0
 
-let HueInitial = 100 / 360
-let SatInitial = 0.75
-let ValInitial = 0.80
+function draw(dt, completeness, cfg) {
+    const c = (2 * Math.PI) * (completeness) / 10
 
-let HueFinal = HueInitial + 1.0
-let SatFinal = SatInitial
-let ValFinal = ValInitial
-
-let Hue = HueInitial
-let Sat = SatInitial
-let Val = ValInitial
-
-ctx.strokeStyle = "rgb(102, 204, 51)"
-ctx.lineWidth = 2
-
-function draw(dt, completeness){
-    ctx.clearRect(0,0,width, height)
-
-    //c = (c + 0.05 * dt) % 2
-    c = (2 * Math.PI) * (completeness) / 10
+    spinnies += (cfg.rotSpeed || 0) * dt
     a = (a + 1.0 * a_dir * dt)
-    if (a > 4.2) {
-        a = 8.4 - a //wraps the value of a back around
-        a_dir = -1
-    }
-    if (a < 0){
-        a = - a
-        a_dir = 1
-    }
-    console.log(dt)
+    if (a > 4.2) { a = 8.4 - a; a_dir = -1 } //wraps the value of a back around
+    if (a < 0)   { a = -a;      a_dir = 1 }
+
     let d
     if (a <= 1.15)                 d = 0
     else if (a >1.15 && a <= 1.35) d = -1.6 * 2.857 * (a - 1)
@@ -91,8 +192,17 @@ function draw(dt, completeness){
     else if (a > 2 && a <= 2.4)     b = -1.5 + 3.25 * (a - 2)
     else                            b = -0.2
 
+    const ctr = center()
+    const SCALE = cfg.scale
+    ctx.lineWidth = cfg.thickness
 
-    for(let theta = 0; theta < 6*Math.PI; theta += 6*Math.PI / STEPS){
+    ctx.clearRect(0, 0, SpiroCanvas.width, SpiroCanvas.height)
+    if (!cfg.transparent) {
+        ctx.fillStyle = cfg.bg
+        ctx.fillRect(0, 0, SpiroCanvas.width, SpiroCanvas.height)
+    }
+
+    for (let theta = 0; theta < 6*Math.PI; theta += 6*Math.PI / STEPS) {
         const theta2 = theta + 6*Math.PI / STEPS
 
         const r1 = r_1(theta, b, d, c)
@@ -100,10 +210,10 @@ function draw(dt, completeness){
         const r3 = r_2(theta, b, d, c)
         const r4 = r_2(theta2, b, d, c)
 
-        const [ x1, y1 ] = polarToRect(r1 * SCALE, theta)
-        const [ x2, y2 ] = polarToRect(r2 * SCALE, theta2)
-        const [ x3, y3 ] = polarToRect(r3 * SCALE, theta)
-        const [ x4, y4 ] = polarToRect(r4 * SCALE, theta2)
+        const [ x1, y1 ] = polarToRect(r1 * SCALE, theta + spinnies, ctr)
+        const [ x2, y2 ] = polarToRect(r2 * SCALE, theta2 + spinnies, ctr)
+        const [ x3, y3 ] = polarToRect(r3 * SCALE, theta + spinnies, ctr)
+        const [ x4, y4 ] = polarToRect(r4 * SCALE, theta2 + spinnies, ctr)
 
         ctx.beginPath()
         ctx.moveTo(x1, y1)
@@ -122,101 +232,299 @@ function r_2(theta, b, d, c) {
     return (((Math.abs(Math.sin((theta + c * Math.PI)*(5 / 6))) ** 0.8 / b) + 1.3)+((Math.abs(Math.cos((theta + c * Math.PI)*(5 / 6))) ** 2.4 / b)) * d)
 }
 
-function polarToRect(r, theta){
-    let y = r * Math.sin(theta) + center.y
-    let x = r * Math.cos(theta) + center.x
-
+function polarToRect(r, theta, ctr) {
+    const y = r * Math.sin(theta) + ctr.y
+    const x = r * Math.cos(theta) + ctr.x
     return [ x, y ]
 }
 
-//requestAnimationFrame(step)
-
-const downloadZipBtn = document.getElementById('downloadZip')
-
-let frameCount = 0
-let time = 12
-
-let zip = new JSZip()
-let gif = new GIF({
-        workers: 2,
-        quality: 10,
-        width: width,
-        height: height,
-        transparent: 0x000000
-    })
-
-function spiro(){
-    let frames = time * 24
-    let proxytimestep = 8.2 / frames //kinda faking this to cram real time into equation time because the equation arbitrarily sets a to bounce between 0 and 4.2, and I dont want to recalculate that to fit with a variable duration.
-    
-    for (let i = 0; i < frames; i++) {
-        console.log("frame:", i)
-        let completeness = i / ( frames + 16 )
-        draw(proxytimestep, completeness)
-        gradColor(frames)
-
-        // SpiroCanvas.toBlob((blob) => {
-        //     const reader = new FileReader()
-        //     reader.onload = function() {
-        //         zip.file(`${i}.png`, reader.result)
-        //     }
-        //     reader.readAsArrayBuffer(blob)
-        // }, 'image/png')
-
-        gif.addFrame(ctx, {copy: true, delay: 40})
+function makeColorWalker(cfg, frames) {
+    const stops = cfg.colors
+    return function step(i) {
+        if (stops.length === 1) {
+            const [r, g, b] = hsvToRgb(stops[0].h, stops[0].s, stops[0].v)
+            ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`
+            return
+        }
+        const pos = (i / frames) * cfg.cycles * stops.length
+        const lo = Math.floor(pos) % stops.length
+        const hi = (lo + 1) % stops.length
+        const f = pos - Math.floor(pos)
+        const col = lerpHsv(stops[lo], stops[hi], f)
+        const [r, g, b] = hsvToRgb(col.h, col.s, col.v)
+        ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`
     }
-
-    downloadZipBtn.disabled = false;
 }
 
-spiro()
-
-function gradColor(step) {
-    Hue = (Hue + ((HueFinal - HueInitial) / step) ) % 1
-    Sat = Math.min((Sat + ((SatFinal - SatInitial) / step) ) , 1)
-    Val = Math.min((Val + ((ValFinal - ValInitial) / step) ) , 1)
-
-    const [red, green, blue] = hsvToRgb(Hue, Sat, Val)
-    ctx.strokeStyle = `rgb(${red}, ${green}, ${blue})`
+function lerpHsv(a, b, f) {
+    let dh = b.h - a.h
+    if (dh > 0.5) dh -= 1
+    if (dh < -0.5) dh += 1
+    return {
+        h: ((a.h + dh * f) % 1 + 1) % 1,
+        s: a.s + (b.s - a.s) * f,
+        v: a.v + (b.v - a.v) * f,
+    }
 }
 
-downloadZipBtn.addEventListener('click', async () => {
-    // let content = await zip.generateAsync({ type: "blob" })
-    // let a = document.createElement('a')
-    // a.href = URL.createObjectURL(content)
-    // a.download = 'spirograph_frames.zip'
-    // a.click()
-    // URL.revokeObjectURL(a.href)
+const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi)
 
-    gif.on('finished', function(blob) {
-        window.open(URL.createObjectURL(blob));
-    });
+function runAnimation(cfg, onFrame) {
+    const frames = Math.round(cfg.duration * cfg.fps)
+    let proxytimestep = (8.2 / frames) * cfg.speed //kinda faking this to cram real time into equation time because the equation arbitrarily sets a to bounce between 0 and 4.2, and I dont want to recalculate that to fit with a variable duration.
 
-    gif.render();
+    const nextColor = makeColorWalker(cfg, frames)
+
+    a = 0
+    a_dir = 1
+    spinnies = 0
+
+    for (let i = 0; i < frames; i++) {
+        const completeness = i / (frames + 16)
+        nextColor(i)
+        draw(proxytimestep, completeness, cfg)
+        onFrame(i, frames)
+    }
+}
+
+let previewCfg = null
+let previewFrame = 0
+let previewColor = null
+let previewRAF = null
+let previewPaused = false
+
+function previewTick() {
+    const cfg = previewCfg
+    const frames = Math.round(cfg.duration * cfg.fps)
+    const proxytimestep = (8.2 / frames) * cfg.speed
+
+    if (previewFrame >= frames) {
+        previewFrame = 0
+        previewColor = makeColorWalker(cfg, frames)
+        a = 0; a_dir = 1; spinnies = 0
+    }
+    previewColor(previewFrame)
+    draw(proxytimestep, previewFrame / (frames + 16), cfg)
+
+    previewFrame++
+    previewRAF = requestAnimationFrame(previewTick)
+}
+
+function restartPreview() {
+    previewCfg = readSettings()
+    applyCanvasSize(previewCfg.size)
+    previewFrame = 0
+    previewColor = makeColorWalker(previewCfg, Math.round(previewCfg.duration * previewCfg.fps))
+    a = 0; a_dir = 1; spinnies = 0
+    if (previewRAF) cancelAnimationFrame(previewRAF)
+    if (!previewPaused) previewRAF = requestAnimationFrame(previewTick)
+}
+
+el("preview").addEventListener("click", () => {
+    previewPaused = !previewPaused
+    el("preview").textContent = previewPaused ? "Play" : "Pause"
+    if (previewPaused) { if (previewRAF) cancelAnimationFrame(previewRAF); previewRAF = null }
+    else restartPreview()
 })
 
-function hsvToRgb(h, s, v) {
-  var r, g, b;
+function updateUiState() {
+    el("bg").disabled = el("bgTransparent").checked
 
-  var i = Math.floor(h * 6);
-  var f = h * 6 - i;
-  var p = v * (1 - s);
-  var q = v * (1 - f * s);
-  var t = v * (1 - (1 - f) * s);
-
-  switch (i % 6) {
-    case 0: r = v, g = t, b = p; break;
-    case 1: r = q, g = v, b = p; break;
-    case 2: r = p, g = v, b = t; break;
-    case 3: r = p, g = q, b = v; break;
-    case 4: r = t, g = p, b = v; break;
-    case 5: r = v, g = p, b = q; break;
-  }
-
-  return [ r * 255, g * 255, b * 255 ];
+    const frames = Math.round(+el("duration").value * +el("fps").value)
+    const size = +el("size").value
+    const cols = Math.ceil(Math.sqrt(frames))
+    const rows = Math.ceil(frames / cols)
+    el("exportInfo").textContent =
+        `${frames} frames · spritesheet ${cols * size}×${rows * size}px (${cols}×${rows})`
 }
 
+el("panel").addEventListener("input", () => { updateUiState(); restartPreview() })
 
+function suspendPreview() {
+    if (previewRAF) cancelAnimationFrame(previewRAF)
+    previewRAF = null
+}
+function resumePreview() {
+    if (!previewPaused) restartPreview()
+}
+
+function applySettings(s) {
+    const set = (id, v) => { if (v !== undefined) el(id).value = v }
+    set("size", s.size); set("bg", s.bg); set("scale", s.scale)
+    set("thickness", s.thickness); set("duration", s.duration); set("fps", s.fps)
+    set("speed", s.speed); set("rotSpeed", s.rotSpeed); set("cycles", s.cycles)
+    if (s.transparent !== undefined) el("bgTransparent").checked = s.transparent
+
+    if (Array.isArray(s.colorHexes)) {
+        el("colorCount").value = s.colorHexes.length
+        buildColorPickers()
+        ;[...el("colorList").children].forEach((inp, i) => { inp.value = s.colorHexes[i] })
+    }
+    refreshLabels(); updateUiState(); restartPreview()
+}
+
+el("saveSettings").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(readSettings(), null, 2)], { type: "application/json" })
+    downloadBlob(blob, "spirograph_settings.json")
+})
+
+el("loadSettings").addEventListener("click", () => el("loadFile").click())
+el("loadFile").addEventListener("change", (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => { applySettings(JSON.parse(reader.result)); el("loadFile").value = "" }
+    reader.readAsText(file)
+})
+
+el("generate").addEventListener("click", () => {
+    suspendPreview()
+    const cfg = readSettings()
+    applyCanvasSize(cfg.size)
+
+    const gif = new GIF({
+        workers: 2,
+        quality: 10,
+        width: cfg.size,
+        height: cfg.size,
+        transparent: cfg.transparent ? 0x000000 : null,
+    })
+
+    const btn = el("generate")
+    busy(btn, "Rendering…")
+
+    const delay = Math.round(1000 / cfg.fps)
+    runAnimation(cfg, () => {
+        gif.addFrame(ctx, { copy: true, delay })
+    })
+
+    gif.on("finished", (blob) => {
+        window.open(URL.createObjectURL(blob))
+        done(btn, "Generate GIF")
+        resumePreview()
+    })
+    gif.render()
+})
+
+el("exportSeq").addEventListener("click", async () => {
+    suspendPreview()
+    const cfg = readSettings()
+    applyCanvasSize(cfg.size)
+    const btn = el("exportSeq")
+    busy(btn, "Zipping…")
+
+    const zip = new JSZip()
+
+    const total = Math.round(cfg.duration * cfg.fps)
+    const nextColor = makeColorWalker(cfg, total)
+    const proxytimestep = (8.2 / total) * cfg.speed
+    a = 0; a_dir = 1; spinnies = 0
+    for (let i = 0; i < total; i++) {
+        nextColor(i)
+        draw(proxytimestep, i / (total + 16), cfg)
+        const blob = await canvasBlob()
+        zip.file(`${String(i).padStart(4, "0")}.png`, blob)
+    }
+
+    const content = await zip.generateAsync({ type: "blob" })
+    downloadBlob(content, "spirograph_frames.zip")
+    done(btn, "Export PNG Sequence")
+    resumePreview()
+})
+
+el("exportSheet").addEventListener("click", async () => {
+    suspendPreview()
+    const cfg = readSettings()
+    applyCanvasSize(cfg.size)
+    const btn = el("exportSheet")
+    busy(btn, "Packing…")
+
+    const total = Math.round(cfg.duration * cfg.fps)
+    const cols = Math.ceil(Math.sqrt(total))
+    const rows = Math.ceil(total / cols)
+
+    const sheet = document.createElement("canvas")
+    sheet.width = cols * cfg.size
+    sheet.height = rows * cfg.size
+    const sctx = sheet.getContext("2d")
+
+    const nextColor = makeColorWalker(cfg, total)
+    const proxytimestep = (8.2 / total) * cfg.speed
+    a = 0; a_dir = 1; spinnies = 0
+    for (let i = 0; i < total; i++) {
+        nextColor(i)
+        draw(proxytimestep, i / (total + 16), cfg)
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        sctx.drawImage(SpiroCanvas, col * cfg.size, row * cfg.size)
+    }
+
+    sheet.toBlob((blob) => {
+        downloadBlob(blob, `spirograph_spritesheet_${cols}x${rows}.png`)
+        done(btn, "Export Spritesheet")
+        resumePreview()
+    }, "image/png")
+})
+
+function canvasBlob() {
+    return new Promise((resolve) => SpiroCanvas.toBlob(resolve, "image/png"))
+}
+
+function downloadBlob(blob, name) {
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(a.href)
+}
+
+function busy(btn, text) { btn.disabled = true; btn.dataset.label = btn.textContent; btn.textContent = text }
+function done(btn, text) { btn.disabled = false; btn.textContent = text }
+
+function hexToHsv(hex) {
+    const n = parseInt(hex.slice(1), 16)
+    const r = ((n >> 16) & 255) / 255
+    const g = ((n >> 8) & 255) / 255
+    const b = (n & 255) / 255
+    return rgbToHsv(r, g, b)
+}
+
+function rgbToHsv(r, g, b) {
+    const max = Math.max(r, g, b), min = Math.min(r, g, b)
+    const d = max - min
+    let h = 0
+    if (d !== 0) {
+        if (max === r)      h = ((g - b) / d) % 6
+        else if (max === g) h = (b - r) / d + 2
+        else                h = (r - g) / d + 4
+        h /= 6
+        if (h < 0) h += 1
+    }
+    const s = max === 0 ? 0 : d / max
+    return { h, s, v: max }
+}
+
+function hsvToRgb(h, s, v) {
+    let r, g, b
+    const i = Math.floor(h * 6)
+    const f = h * 6 - i
+    const p = v * (1 - s)
+    const q = v * (1 - f * s)
+    const t = v * (1 - (1 - f) * s)
+    switch (i % 6) {
+        case 0: r = v, g = t, b = p; break
+        case 1: r = q, g = v, b = p; break
+        case 2: r = p, g = v, b = t; break
+        case 3: r = p, g = q, b = v; break
+        case 4: r = t, g = p, b = v; break
+        case 5: r = v, g = p, b = q; break
+    }
+    return [ Math.round(r * 255), Math.round(g * 255), Math.round(b * 255) ]
+}
+
+el("preview").textContent = "Pause"
+updateUiState()
+restartPreview()
 </script>
     </body>
 </html>
